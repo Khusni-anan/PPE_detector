@@ -1,9 +1,9 @@
 import streamlit as st
 import cv2
+import numpy as np
 import tempfile
 from ultralytics import YOLO
 from PIL import Image
-import time
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
@@ -13,142 +13,144 @@ st.set_page_config(
 )
 
 # --- JUDUL & SIDEBAR ---
-st.title("👷 Sistem Deteksi Kepatuhan APD (Real-Time)")
+st.title("👷 Sistem Deteksi Kepatuhan APD")
 st.markdown("---")
 
 st.sidebar.header("⚙️ Panel Kontrol")
 
-# Pilihan Sumber Video
+# Pilihan Sumber Media
 source_radio = st.sidebar.radio(
-    "Sumber Kamera:",
-    ["Webcam (Live)", "Upload Video (Tes)"]
+    "Sumber Media:",
+    ["Ambil Foto (Webcam)", "Upload Video", "Upload Gambar"]
 )
 
 # Slider Sensitivitas AI
 conf_threshold = st.sidebar.slider(
     "Akurasi Minimal (Confidence)", 
-    min_value=0.0, max_value=1.0, value=0.45, step=0.05,
-    help="Semakin tinggi, AI semakin 'pemilih' (hanya mendeteksi yang sangat jelas)."
+    min_value=0.0, max_value=1.0, value=0.45, step=0.05
 )
 
-# --- LOAD MODEL CUSTOM ---
+# --- LOAD MODEL ---
 @st.cache_resource
 def load_model():
-    # Memuat model hasil training kamu
-    # Pastikan file 'best.pt' ada di satu folder dengan app.py
-    model = YOLO('best.pt') 
-    return model
+    # Pastikan file 'best.pt' ada di github
+    return YOLO('best.pt')
 
 try:
     model = load_model()
     st.sidebar.success("✅ Model AI Siap!")
-    
-    # Menampilkan kelas yang bisa dideteksi (Sesuai dataset kamu)
-    with st.sidebar.expander("Daftar Objek Deteksi"):
-        st.write(model.names)
-        # Harusnya isinya: Boots, Gloves, Mask, Safety-Helmet, Safety-Vest, Safety-Wearpack
 except Exception as e:
-    st.sidebar.error(f"⚠️ Model 'best.pt' tidak ditemukan! Pastikan file ada di folder.")
+    st.sidebar.error("⚠️ Model tidak ditemukan!")
     st.stop()
 
-# --- FUNGSI PROSES VIDEO ---
-def process_video(cap):
-    st_frame = st.empty()
+# --- FUNGSI DETEKSI (UMUM) ---
+def detect_objects(frame):
+    # Resize frame
+    frame = cv2.resize(frame, (854, 480))
+    results = model(frame, conf=conf_threshold, verbose=False)
     
-    # Statistik (KPI) di atas video
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    stats = {'Helm': 0, 'Rompi': 0, 'Gloves': 0, 'Boots': 0}
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cls = int(box.cls[0])
+            label = model.names[cls]
+            conf = float(box.conf[0])
+            
+            # Pewarnaan & Hitung
+            if label in ['Safety-Helmet', 'Safety-Vest', 'Safety-Wearpack']:
+                color = (0, 255, 0)
+                if label == 'Safety-Helmet': stats['Helm'] += 1
+                if label == 'Safety-Vest': stats['Rompi'] += 1
+            elif label in ['Gloves', 'Mask', 'Boots']:
+                color = (255, 255, 0)
+                if label == 'Gloves': stats['Gloves'] += 1
+                if label == 'Boots': stats['Boots'] += 1
+            else:
+                color = (255, 255, 255)
 
-        # Resize agar performa cepat
-        frame = cv2.resize(frame, (854, 480))
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, f"{label} {int(conf*100)}%", (x1, y1-10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    return frame, stats
+
+# --- LOGIKA UTAMA ---
+
+# 1. MODE WEBCAM (FITUR FOTO) - COCOK BUAT CLOUD
+if source_radio == "Ambil Foto (Webcam)":
+    st.write("### 📸 Ambil Foto dari Webcam")
+    st.info("Karena berjalan di Cloud, sistem menggunakan metode 'Snapshot' (Bukan Video Stream).")
+    
+    # Widget Kamera Resmi Streamlit (Bekerja di Browser/HP)
+    img_file = st.camera_input("Klik tombol 'Take Photo'")
+    
+    if img_file is not None:
+        # Konversi Foto ke Format OpenCV
+        image = Image.open(img_file)
+        frame = np.array(image)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         
-        # 1. Deteksi dengan Model Kamu
-        results = model(frame, conf=conf_threshold, verbose=False)
+        # Proses Deteksi
+        processed_frame, stats = detect_objects(frame)
+        
+        # Tampilkan Hasil
+        st.image(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB), caption="Hasil Analisa", use_column_width=True)
+        
+        # Tampilkan KPI
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("⛑️ Helm", stats['Helm'])
+        k2.metric("🦺 Rompi", stats['Rompi'])
+        k3.metric("🧤 Sarung Tangan", stats['Gloves'])
+        k4.metric("🥾 Sepatu", stats['Boots'])
 
-        # Variabel Hitungan per Frame
-        count_helmet = 0
-        count_vest = 0
-        count_gloves = 0
-        count_boots = 0
-
-        # 2. Gambar Kotak & Label
-        for r in results:
-            boxes = r.boxes
-            for box in boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cls = int(box.cls[0])
-                label_name = model.names[cls]
-                conf = float(box.conf[0])
-                
-                # --- LOGIKA WARNA & KATEGORI ---
-                # Sesuai training log kamu: 
-                # Boots, Gloves, Mask, Safety-Helmet, Safety-Vest, Safety-Wearpack
-                
-                # KELOMPOK 1: APD UTAMA (Hijau Tebal)
-                if label_name in ['Safety-Helmet', 'Safety-Vest', 'Safety-Wearpack']:
-                    color = (0, 255, 0) # Hijau
-                    if label_name == 'Safety-Helmet': count_helmet += 1
-                    if label_name == 'Safety-Vest': count_vest += 1
-                
-                # KELOMPOK 2: APD TAMBAHAN (Kuning/Biru)
-                elif label_name in ['Gloves', 'Mask', 'Boots']:
-                    color = (255, 255, 0) # Cyan/Kuning
-                    if label_name == 'Gloves': count_gloves += 1
-                    if label_name == 'Boots': count_boots += 1
-                
-                else:
-                    color = (255, 255, 255) # Putih (Lainnya)
-
-                # Gambar Kotak
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                
-                # Background Label
-                text = f"{label_name} {int(conf*100)}%"
-                (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
-                cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
-                cv2.putText(frame, text, (x1, y1 - 5), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-
-        # 3. Peringatan Dini (Logika Sederhana)
-        # Jika terdeteksi Rompi/Wearpack TAPI Helm Nol -> Potensi Pelanggaran
-        if count_vest > 0 and count_helmet == 0:
-            cv2.putText(frame, "PERINGATAN: CEK HELM!", (50, 50), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-
-        # 4. Update Statistik KPI
-        with kpi1:
-            st.metric("⛑️ Helm", count_helmet)
-        with kpi2:
-            st.metric("🦺 Rompi", count_vest)
-        with kpi3:
-            st.metric("🧤 Sarung Tangan", count_gloves)
-        with kpi4:
-            st.metric("🥾 Sepatu", count_boots)
-
-        # 5. Tampilkan ke Layar
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        st_frame.image(frame_rgb, channels="RGB", use_column_width=True)
-
-    cap.release()
-
-# --- LOGIKA INPUT UTAMA ---
-if source_radio == "Webcam (Live)":
-    if st.sidebar.button("🔴 Mulai Kamera"):
-        cap = cv2.VideoCapture(0) # Index 0 untuk webcam laptop
-        process_video(cap)
-
-elif source_radio == "Upload Video (Tes)":
-    uploaded_file = st.sidebar.file_uploader("Upload video .mp4", type=['mp4', 'avi'])
-    if uploaded_file is not None:
-        # Simpan file sementara agar bisa dibaca OpenCV
+# 2. MODE UPLOAD VIDEO
+elif source_radio == "Upload Video":
+    st.write("### ▶️ Analisa Video")
+    uploaded_file = st.sidebar.file_uploader("Upload video .mp4", type=['mp4'])
+    
+    if uploaded_file:
         tfile = tempfile.NamedTemporaryFile(delete=False) 
         tfile.write(uploaded_file.read())
-        
         cap = cv2.VideoCapture(tfile.name)
         
-        if st.sidebar.button("▶️ Putar Video"):
-            process_video(cap)
+        start_button = st.sidebar.button("Mulai Putar")
+        
+        if start_button:
+            st_frame = st.empty()
+            k1, k2, k3, k4 = st.columns(4)
+            
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret: break
+                
+                processed_frame, stats = detect_objects(frame)
+                
+                # Update Gambar & Angka
+                st_frame.image(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB), use_column_width=True)
+                k1.metric("⛑️ Helm", stats['Helm'])
+                k2.metric("🦺 Rompi", stats['Rompi'])
+                k3.metric("🧤 Sarung Tangan", stats['Gloves'])
+                k4.metric("🥾 Sepatu", stats['Boots'])
+            cap.release()
+
+# 3. MODE UPLOAD GAMBAR
+elif source_radio == "Upload Gambar":
+    st.write("### 🖼️ Analisa Gambar")
+    uploaded_file = st.sidebar.file_uploader("Upload gambar", type=['jpg', 'png', 'jpeg'])
+    
+    if uploaded_file:
+        image = Image.open(uploaded_file)
+        frame = np.array(image)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        
+        processed_frame, stats = detect_objects(frame)
+        st.image(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB), use_column_width=True)
+        
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("⛑️ Helm", stats['Helm'])
+        k2.metric("🦺 Rompi", stats['Rompi'])
+        k3.metric("🧤 Sarung Tangan", stats['Gloves'])
+        k4.metric("🥾 Sepatu", stats['Boots'])
