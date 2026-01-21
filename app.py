@@ -56,7 +56,7 @@ def detect_objects(frame):
         for box in boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             cls = int(box.cls[0])
-            label = model.names[cls]
+            label_name = model.names[cls] 
             conf = float(box.conf[0])
             
             # Pewarnaan & Hitung
