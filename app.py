@@ -72,7 +72,7 @@ def detect_objects(frame):
                 color = (255, 255, 255) # Putih
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"{label} {int(conf*100)}%", (x1, y1-10), 
+            cv2.putText(frame, f"{label_name} {int(conf*100)}%", (x1, y1-10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
     return frame, stats
