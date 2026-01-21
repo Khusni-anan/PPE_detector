@@ -60,16 +60,16 @@ def detect_objects(frame):
             conf = float(box.conf[0])
             
             # Pewarnaan & Hitung
-            if label in ['Safety-Helmet', 'Safety-Vest', 'Safety-Wearpack']:
-                color = (0, 255, 0)
-                if label == 'Safety-Helmet': stats['Helm'] += 1
-                if label == 'Safety-Vest': stats['Rompi'] += 1
-            elif label in ['Gloves', 'Mask', 'Boots']:
-                color = (255, 255, 0)
-                if label == 'Gloves': stats['Gloves'] += 1
-                if label == 'Boots': stats['Boots'] += 1
+            if label_name in ['Safety-Helmet', 'Safety-Vest', 'Safety-Wearpack']:
+                color = (0, 255, 0) # Hijau
+                if label_name == 'Safety-Helmet': stats['Helm'] += 1
+                if label_name == 'Safety-Vest': stats['Rompi'] += 1
+            elif label_name in ['Gloves', 'Boots', 'Mask']:
+                color = (255, 255, 0) # Kuning
+                if label_name == 'Gloves': stats['Gloves'] += 1
+                if label_name == 'Boots': stats['Boots'] += 1
             else:
-                color = (255, 255, 255)
+                color = (255, 255, 255) # Putih
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             cv2.putText(frame, f"{label} {int(conf*100)}%", (x1, y1-10), 
